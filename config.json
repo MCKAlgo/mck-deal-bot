@@ -1,0 +1,46 @@
+{
+  "bot_token": "",
+  "check_interval_seconds": 60,
+  "digest_hour": 9,
+  "digest_minute": 0,
+  "max_alerts_per_cycle": 8,
+  "max_selective_alerts": 2,
+  "alert_cooldown_hours": 24,
+  "realert_improve_pct": 2,
+  "product_rechecks_per_cycle": 4,
+  "max_categories": 400,
+  "min_price": 149,
+  "max_price": 200000,
+  "gate": {
+    "exceptional_min": 90,
+    "best_min": 80,
+    "strong_min": 70,
+    "selective_min": 60,
+    "best_confidence_min": 75,
+    "watch_confidence_min": 60
+  },
+  "cycle_budget": {
+    "amazon": 7,
+    "flipkart": 4,
+    "meesho": 4,
+    "nykaa": 4,
+    "ajio": 4,
+    "tatacliq": 4
+  },
+  "rules": {
+    "all_time_low": true,
+    "discount_60": true,
+    "cross_platform_win": true,
+    "drop_500_7d": true
+  },
+  "platforms": {
+    "flipkart": true,
+    "amazon": true,
+    "meesho": true,
+    "croma": true,
+    "jiomart": true,
+    "nykaa": true,
+    "ajio": true,
+    "tatacliq": true
+  }
+}
