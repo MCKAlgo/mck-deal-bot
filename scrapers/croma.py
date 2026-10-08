@@ -46,7 +46,10 @@ class CromaAdapter(RetailerAdapter):
         picked = [(c, u) for c, u in (cats or [])] or self.rotate_slice(
             self._flat_urls(), offset, budget)
         products = []
+        self.begin_sweep()
         for category, url in picked:
+            if self.circuit_open():
+                break
             html = self.fetch(url)
             if not html:
                 self.blocked_count += 1

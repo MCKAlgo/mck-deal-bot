@@ -313,6 +313,28 @@ class Database:
                         ORDER BY last_score DESC LIMIT ?""", (limit,))
             return [dict(r) for r in cur.fetchall()]
 
+    def alerts_since(self, days: int = 7, limit: int = 10) -> list:
+        """Best alerts sent in the last N days (for the weekly report)."""
+        since = (now_ist() - timedelta(days=days)).isoformat(timespec="seconds")
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("""SELECT a.score, a.price, a.alert_type, a.sent_at,
+                                  p.title, p.platform, p.url
+                           FROM alerts_log a JOIN products p ON p.id = a.product_id
+                           WHERE a.sent_at >= ?
+                           GROUP BY a.product_id
+                           ORDER BY a.score DESC LIMIT ?""", (since, limit))
+            return [dict(r) for r in cur.fetchall()]
+
+    def alerts_count_since(self, days: int = 7) -> int:
+        since = (now_ist() - timedelta(days=days)).isoformat(timespec="seconds")
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT COUNT(*) AS n FROM alerts_log WHERE sent_at >= ?",
+                        (since,))
+            row = cur.fetchone()
+            return int(row["n"]) if row else 0
+
     # ---------------- alerts / dedup ----------------
     def alert_allowed(self, product_id: int, alert_type: str, cooldown_hours: int,
                       current_price: float = None, improve_pct: float = 0.0) -> bool:

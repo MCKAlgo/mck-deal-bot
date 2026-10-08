@@ -52,6 +52,18 @@ class BaseScraper:
         self.session.headers.update(dict(BASE_HEADERS))
         self.rotate_ua()
         self.last_request_ts = 0.0
+        self._circuit_open = False
+        self._circuit_403 = 0
+
+    def begin_sweep(self):
+        """Reset per-cycle circuit breaker state."""
+        self._circuit_open = False
+        self._circuit_403 = 0
+
+    def circuit_open(self) -> bool:
+        """True once the site has hard-blocked us twice in a row this cycle -
+        remaining URLs of this platform are skipped (retry next cycle)."""
+        return self._circuit_open
 
     def rotate_ua(self):
         self.session.headers["User-Agent"] = random.choice(USER_AGENTS)
@@ -85,6 +97,9 @@ class BaseScraper:
                     self.session.cookies.clear()
                     continue
                 if r.status_code in (429, 403, 503):
+                    self._circuit_403 += 1
+                    if self._circuit_403 >= 2:
+                        self._circuit_open = True
                     log.warning("[%s] %s -> %s, backing off", self.platform, url[:80], r.status_code)
                     time.sleep(4 + attempt * 6)
                     self.rotate_ua()

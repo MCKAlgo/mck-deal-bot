@@ -100,6 +100,7 @@ class FlipkartScraper(RetailerAdapter):
 
     def fetch_products(self, offset: int = 0, budget: int = 4, cats: list = None) -> list:
         products = []
+        self.begin_sweep()
 
         def _valid(html: str) -> bool:
             return "/p/itm" in html or "productId" in html
@@ -111,9 +112,13 @@ class FlipkartScraper(RetailerAdapter):
         log.info("[%s] cycle slice: %s", self.platform,
                  [u.split('?')[0].rsplit('/', 1)[-1] for _, u in picked])
         for category, url in picked:
+            if self.circuit_open():
+                break
             # page 2 doubles yield when Flipkart serves real pages
             page_urls = [url + "&page=2", url] if "?" in url else [url]
             for page_url in page_urls:
+                if self.circuit_open():
+                    break
                 html = self.fetch(page_url, validate=_valid)
                 if not html:
                     continue

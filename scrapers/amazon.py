@@ -70,11 +70,14 @@ class AmazonScraper(RetailerAdapter):
     def fetch_products(self, offset: int = 0, budget: int = 7, cats: list = None) -> list:
         if not self.warmed_up or self.consecutive_failures >= 1:
             self.warm_up(force=self.consecutive_failures >= 1)
+        self.begin_sweep()
         if cats:
             # discovered browse-node search URLs (catalogue universe)
             picked = [(c.get("name") or "catalogue", c["url"]) for c in cats]
             products = []
             for category, url in picked:
+                if self.circuit_open():
+                    break
                 html = self.fetch(url, referer="https://www.amazon.in/")
                 if not html or len(html) < 3000:
                     self.consecutive_failures += 1
@@ -91,6 +94,8 @@ class AmazonScraper(RetailerAdapter):
             log.info("[%s] cycle slice: %s", self.platform, [q for _, q in picked])
             products = []
             for category, q in picked:
+                if self.circuit_open():
+                    break
                 url = f"https://www.amazon.in/s?k={q.replace(' ', '+')}"
                 html = self.fetch(url, referer="https://www.amazon.in/")
                 if not html or len(html) < 3000:

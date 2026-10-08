@@ -69,11 +69,14 @@ class AjioAdapter(RetailerAdapter):
 
     def fetch_products(self, offset: int = 0, budget: int = 4, cats: list = None) -> list:
         products = []
+        self.begin_sweep()
         if cats:
             picked = [(c.get("name") or "fashion", c["url"]) for c in cats]
         else:
             picked = self.rotate_slice(self._flat_urls(), offset, budget)
         for category, url in picked:
+            if self.circuit_open():
+                break
             html = self.fetch(url)
             if not html:
                 self.blocked_count += 1

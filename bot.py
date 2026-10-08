@@ -112,7 +112,9 @@ class DealBot:
                             ("jiomart", "JioMartAdapter"),
                             ("nykaa", "NykaaAdapter"),
                             ("ajio", "AjioAdapter"),
-                            ("tatacliq", "TataCliqAdapter")):
+                            ("tatacliq", "TataCliqAdapter"),
+                            ("myntra", "MyntraAdapter"),
+                            ("firstcry", "FirstCryAdapter")):
             try:
                 mod = __import__(f"scrapers.{module}", fromlist=[cls])
                 self.scrapers[module] = getattr(mod, cls)()
@@ -194,21 +196,26 @@ class DealBot:
     def run_cycle(self, platform_override: str = ""):
         self.maybe_reload_config()
         self.db.bump_stat("checks")
-        # Round-robin: one platform per cycle -> each platform checked every
-        # few minutes while keeping request volume gentle on every site.
-        # The rotation cursor lives in the DB, so sweeps continue seamlessly
-        # across restarts (incl. scheduled CI runs doing --once).
+        # FULL SWEEP: every enabled platform is checked EVERY cycle - not one
+        # or two stores, all of them, every time. Two safety valves keep each
+        # cycle inside its wall-clock budget:
+        #   1. per-cycle time budget (cycle_time_budget_seconds, default 300s)
+        #      - platforms beyond it are deferred to the next cycle
+        #   2. per-platform circuit breaker - a hard-blocked site (2x 403)
+        #      is skipped for the rest of the cycle instead of wasting time
+        # Within each platform the sweep still rotates through the catalogue
+        # universe (rr_off_<name> cursor), so full coverage compounds.
         enabled = [k for k, v in self.config.get("platforms", {}).items() if v]
         if platform_override:
             enabled = [platform_override] if platform_override in self.scrapers else enabled
+        sweep_t0 = time.time()
+        budget_s = int(self.config.get("cycle_time_budget_seconds", 300))
         all_products = []
-        if enabled:
-            try:
-                rr = int(self.db.get_meta("rr_index", "0") or 0) + 1
-            except (TypeError, ValueError):
-                rr = 1
-            self.db.set_meta("rr_index", str(rr))
-            name = enabled[rr % len(enabled)]
+        done, deferred = [], []
+        for name in enabled:
+            if time.time() - sweep_t0 > budget_s and not platform_override:
+                deferred.append(name)
+                continue
             try:
                 offset = int(self.db.get_meta(f"rr_off_{name}", "0") or 0)
             except (TypeError, ValueError):
@@ -216,37 +223,46 @@ class DealBot:
             self.db.set_meta(f"rr_off_{name}", str(offset + 1))
             budget = int(self.config.get("cycle_budget", {}).get(name, 5))
             scraper = self.scrapers.get(name)
-            if scraper:
-                try:
-                    # catalogue universe: rotating slice of DISCOVERED categories
-                    cats = []
-                    max_cats = int(self.config.get("max_categories", 400))
-                    if self.db.category_count(name) > 0 and offset > 2:
-                        cats = self.db.pick_categories(name, offset, budget)
-                    prods = scraper.fetch_products(offset=offset, budget=budget,
-                                                   cats=cats)
-                    for c in cats:
-                        self.db.mark_category_crawled(c["id"], 0)
-                    all_products.extend(prods)
-                    # catalogue discovery: adapters collect deeper subcategories
-                    # from the HTML they already fetched (zero extra requests)
-                    discovered = scraper.drain_discovered()
-                    new = 0
-                    for d in discovered:
-                        if self.db.category_count(name) >= max_cats:
-                            break
-                        if self.db.add_category(name, d["url"], d.get("name", ""),
-                                                d.get("depth", 1)):
-                            new += 1
-                    if new:
-                        log.info("[catalogue] %s: +%d discovered subcategories "
-                                 "(universe: %d)", name, new,
-                                 self.db.category_count(name))
-                    log.info("[rr] checked platform: %s (offset %d, budget %d) -> %d products",
-                             name, offset, budget, len(prods))
-                except Exception as e:
-                    log.warning("[%s] cycle error: %s", name, str(e)[:150])
-        log.info("Cycle gathered %d raw products", len(all_products))
+            if not scraper:
+                continue
+            try:
+                # catalogue universe: rotating slice of DISCOVERED categories
+                cats = []
+                max_cats = int(self.config.get("max_categories", 400))
+                if self.db.category_count(name) > 0 and offset > 2:
+                    cats = self.db.pick_categories(name, offset, budget)
+                prods = scraper.fetch_products(offset=offset, budget=budget,
+                                               cats=cats)
+                for c in cats:
+                    self.db.mark_category_crawled(c["id"], 0)
+                all_products.extend(prods)
+                # catalogue discovery: adapters collect deeper subcategories
+                # from the HTML they already fetched (zero extra requests)
+                discovered = scraper.drain_discovered()
+                new = 0
+                for d in discovered:
+                    if self.db.category_count(name) >= max_cats:
+                        break
+                    if self.db.add_category(name, d["url"], d.get("name", ""),
+                                            d.get("depth", 1)):
+                        new += 1
+                if new:
+                    log.info("[catalogue] %s: +%d discovered subcategories "
+                             "(universe: %d)", name, new,
+                             self.db.category_count(name))
+                log.info("[sweep] %s (offset %d, budget %d) -> %d products",
+                         name, offset, budget, len(prods))
+                done.append(name)
+            except Exception as e:
+                log.warning("[%s] cycle error: %s", name, str(e)[:150])
+        if deferred:
+            log.info("[sweep] time budget (%ds) reached - deferred to next cycle: %s",
+                     budget_s, ", ".join(deferred))
+        log.info("Cycle gathered %d raw products from %d/%d platforms in %ds",
+                 len(all_products), len(done), len(enabled),
+                 int(time.time() - sweep_t0))
+        if not all_products:
+            return
         if not all_products:
             return
 
@@ -492,6 +508,44 @@ class DealBot:
         self.db.set_meta("last_digest_date", today)
         log.info("Daily digest sent")
 
+    def maybe_weekly_report(self):
+        """Monday morning: WEEKLY REPORT - week stats + top verified deals."""
+        n = now_ist()
+        if n.weekday() != 0 or n.hour != int(self.config.get("digest_hour", 9)):
+            return
+        if not self.config.get("weekly_report", True):
+            return
+        week = n.date().isocalendar()[1]
+        key = f"last_weekly_report_{n.date().year}_w{week}"
+        if self.db.get_meta(key):
+            return
+        chats = self.db.get_chats()
+        if not chats or not self.tg:
+            return
+        stats = self.db.stats_summary()
+        top = self.db.alerts_since(days=7, limit=5)
+        lines = [
+            "📊 <b>WEEKLY REPORT</b>",
+            f"<i>Week {week} · {n.strftime('%d %b %Y')}</i>",
+            "",
+            f"🔍 Products tracked: <b>{stats.get('products', 0)}</b>",
+            f"📦 Price points recorded: <b>{stats.get('price_points', 0)}</b>",
+            f"🔥 Alerts delivered this week: <b>{self.db.alerts_count_since(7)}</b>",
+            f"🏪 Retailers monitored: <b>{len(self.scrapers)}</b>",
+        ]
+        if top:
+            lines += ["", "🏆 <b>TOP DEALS OF THE WEEK</b>"]
+            for i, t in enumerate(top, 1):
+                title = (t.get("title") or "")[:55]
+                plat = (t.get("platform") or "").title()
+                price = t.get("price") or 0
+                score = t.get("score") or 0
+                lines.append(f"{i}. {title}\n    {plat} · ₹{price:,.0f} · score {score:.0f}")
+        lines += ["", "Full 24/7 monitoring continues. Next report: next Monday 📈"]
+        self.tg.broadcast(chats, "\n".join(lines), disable_preview=True)
+        self.db.set_meta(key, "1")
+        log.info("Weekly report sent (%s)", key)
+
     # ------------------------------------------------ commands
     def handle_command(self, update: dict):
         msg = update.get("message") or update.get("edited_message") or {}
@@ -582,6 +636,7 @@ class DealBot:
             try:
                 self.run_cycle(platform_override=platform_override)
                 self.maybe_digest()
+                self.maybe_weekly_report()
                 try:
                     rb = int(self.config.get("product_rechecks_per_cycle", 4))
                 except (TypeError, ValueError):
@@ -626,6 +681,8 @@ def main():
 
     if args.once:
         bot.run_cycle(platform_override=args.platform)
+        bot.maybe_digest()
+        bot.maybe_weekly_report()
         log.info("Single cycle done.")
         return
 

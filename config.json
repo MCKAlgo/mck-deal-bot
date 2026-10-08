@@ -3,8 +3,10 @@
   "check_interval_seconds": 60,
   "digest_hour": 9,
   "digest_minute": 0,
-  "max_alerts_per_cycle": 8,
-  "max_selective_alerts": 2,
+  "weekly_report": true,
+  "cycle_time_budget_seconds": 300,
+  "max_alerts_per_cycle": 10,
+  "max_selective_alerts": 3,
   "alert_cooldown_hours": 24,
   "realert_improve_pct": 2,
   "product_rechecks_per_cycle": 4,
@@ -20,12 +22,16 @@
     "watch_confidence_min": 60
   },
   "cycle_budget": {
-    "amazon": 7,
-    "flipkart": 4,
-    "meesho": 4,
-    "nykaa": 4,
-    "ajio": 4,
-    "tatacliq": 4
+    "amazon": 15,
+    "flipkart": 8,
+    "meesho": 8,
+    "croma": 6,
+    "jiomart": 6,
+    "nykaa": 8,
+    "ajio": 8,
+    "tatacliq": 8,
+    "myntra": 8,
+    "firstcry": 6
   },
   "rules": {
     "all_time_low": true,
@@ -41,6 +47,8 @@
     "jiomart": true,
     "nykaa": true,
     "ajio": true,
-    "tatacliq": true
+    "tatacliq": true,
+    "myntra": true,
+    "firstcry": true
   }
 }
