@@ -169,7 +169,9 @@ class Database:
             row = cur.fetchone()
             if row:
                 pid = row["id"]
-                cur.execute("""UPDATE products SET title=?, url=?, image_url=?, mrp=?,
+                cur.execute("""UPDATE products SET title=?, url=?,
+                            image_url=CASE WHEN ? != '' THEN ? ELSE image_url END,
+                            mrp=?,
                             current_price=?, discount_pct=?, rating=?, reviews_count=?,
                             category=?, last_seen=?,
                             brand=COALESCE(NULLIF(?, ''), brand),
@@ -178,7 +180,9 @@ class Database:
                             availability=COALESCE(?, availability),
                             seller=COALESCE(?, seller)
                             WHERE id=?""",
-                            (p["title"], p.get("url"), p.get("image_url"), p.get("mrp"),
+                            (p["title"], p.get("url"),
+                             p.get("image_url") or "", p.get("image_url") or "",
+                             p.get("mrp"),
                              p["current_price"], p.get("discount_pct"), p.get("rating"),
                              p.get("reviews_count"), p.get("category", "general"), ts,
                              p.get("brand") or "", p.get("model"), p.get("subcategory"),

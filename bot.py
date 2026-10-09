@@ -428,11 +428,23 @@ class DealBot:
         for c in to_send:
             msg = fmt_deal_alert(c["product"], c["verdict"], c["group_info"], c["stats"])
             buttons = deal_buttons(c["product"], c["group_info"])
+            # IMAGE RESOLUTION CHAIN (v4.1): fresh scrape -> stored DB row
+            # (earlier sweeps may have caught the image) -> normalize legacy
+            # template URLs (Flipkart {@width}/{@height}) into fetchable ones.
             image = (c["product"].get("image_url") or "").strip()
-            if image.startswith("http"):
+            if not image.startswith("https://"):
+                row = self.db.get_product(c["pid"])
+                if row and row.get("image_url"):
+                    image = (row["image_url"] or "").strip()
+            from scraper_base import normalize_image_url
+            image = normalize_image_url(image)
+            if image:
                 ok = self.tg.broadcast_photo(chats, image, msg, reply_markup=buttons)
                 if ok:
                     photos += 1
+                else:
+                    ok = self.tg.broadcast(chats, msg, disable_preview=True,
+                                           reply_markup=buttons)
             else:
                 ok = self.tg.broadcast(chats, msg, disable_preview=True,
                                        reply_markup=buttons)

@@ -44,6 +44,40 @@ def parse_price(text) -> float:
         return 0.0
 
 
+def normalize_image_url(url) -> str:
+    """Make a product image URL that Telegram's sendPhoto can actually fetch.
+
+    Retailers serve images in several annoying shapes:
+      - Flipkart templates:  http://rukmini1.flixcart.com/image/{@width}/{@height}/...
+      - Protocol-relative:   //rukminim2.flixcart.com/image/...
+      - Plain http:          http://rukmini1.flixcart.com/...  (Telegram prefers https)
+      - Lazy placeholders:   data:image/gif;base64... / 1x1 pixels
+    This returns a fetchable https URL (448x448 for Flipkart CDN), or ''.
+    """
+    if not url:
+        return ""
+    url = str(url).strip().replace("\\u002F", "/")
+    if not url or url.startswith("data:"):
+        return ""
+    if url.startswith("//"):
+        url = "https:" + url
+    if url.startswith("http://"):
+        url = "https://" + url[len("http://"):]
+    # Flipkart CDN template placeholders -> real values
+    # (?q= quality must stay 1-100, so {@quality} -> 70, NOT 448)
+    url = re.sub(r"\{[^}]{0,12}qual[^}]{0,12}\}", "70", url)
+    url = re.sub(r"\{[^}]{0,12}(hei|h)[^}]{0,12}\}", "448", url)
+    url = re.sub(r"\{[^}]{0,12}wid[^}]{0,12}\}", "448", url)
+    url = url.replace("{@width}", "448").replace("{@height}", "448")
+    url = re.sub(r"\{[^}]{1,12}\}", "448", url)  # any leftover template variants
+    # Flipkart often supports a size prefix swap; keep path but ensure /image/<w>/<h>/
+    if not url.startswith("https://"):
+        return ""
+    if "{" in url:
+        return ""
+    return url
+
+
 class BaseScraper:
     platform = "base"
 
@@ -137,6 +171,6 @@ class BaseScraper:
             "discount_pct": float(discount_pct or 0),
             "rating": rating,
             "reviews_count": reviews,
-            "image_url": image_url or "",
+            "image_url": normalize_image_url(image_url),
             "category": category,
         }

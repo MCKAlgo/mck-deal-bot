@@ -38,10 +38,20 @@ CATEGORY_URLS = SEED_CATEGORIES
 
 
 def _walk(node, found):
-    """Recursively walk JSON for Flipkart product-summary nodes."""
+    """Recursively walk JSON for Flipkart product-summary nodes.
+
+    Flipkart's state tree is full of wrapper/impression nodes that carry a
+    productId but NO data (bannerId/impressionId/responseId shapes). The old
+    walker returned on the first productId it saw, which both lost ~90% of
+    products AND skipped the real cards (the only nodes with media/pricing).
+    Now: a node counts as a product card only if it has productId/listingId
+    PLUS pricing or titles; anything else is walked into, not returned on.
+    """
     if isinstance(node, dict):
         pid = node.get("productId") or node.get("listingId")
-        if isinstance(pid, str) and len(pid) >= 8:
+        if isinstance(pid, str) and len(pid) >= 8 \
+                and (isinstance(node.get("pricing"), dict)
+                     or isinstance(node.get("titles"), (dict, str))):
             pricing = node.get("pricing") or {}
             titles = node.get("titles") or node.get("title") or {}
             media = node.get("media") or {}
@@ -54,6 +64,18 @@ def _walk(node, found):
                 m = pricing.get("mrp")
                 if isinstance(m, dict):
                     mrp = parse_price(m.get("value"))
+                # catalogue cards shape: prices[] with strikeOff flags
+                # strikeOff=True = crossed-out MRP, False = selling price
+                prices = pricing.get("prices")
+                if isinstance(prices, list):
+                    for entry in prices:
+                        if not isinstance(entry, dict):
+                            continue
+                        v = parse_price(entry.get("value"))
+                        if entry.get("strikeOff") is True and v > 0:
+                            mrp = mrp or v
+                        elif entry.get("strikeOff") is False and v > 0:
+                            price = v
                 if not price:
                     price = parse_price(pricing.get("finalPrice") or pricing.get("price"))
                 if not mrp:
@@ -72,10 +94,15 @@ def _walk(node, found):
                     image = images[0].get("url") or ""
                 elif images and isinstance(images[0], str):
                     image = images[0]
+                # many Flipkart nodes carry only imageId - compose the CDN URL
+                if not image and media.get("imageId"):
+                    image = ("https://rukminim2.flixcart.com/image/448/448/"
+                             + str(media["imageId"]).lstrip("/"))
             rating = None
             reviews = None
             if isinstance(rating_node, dict):
-                rating = rating_node.get("averageStarRating") or rating_node.get("avgStarRating")
+                rating = (rating_node.get("average") or rating_node.get("averageStarRating")
+                          or rating_node.get("avgStarRating"))
                 reviews = rating_node.get("count") or rating_node.get("ratingCount")
             if price > 0 and title:
                 found.append({"pid": pid, "title": title, "price": price, "mrp": mrp,
@@ -241,7 +268,11 @@ class FlipkartScraper(RetailerAdapter):
                 revm = re.search(r"([\d,]{3,})\s*(?:Ratings|Reviews)", block_text)
                 reviews = int(revm.group(1).replace(",", "")) if revm else None
                 img = a.find("img")
-                image = (img.get("src") or img.get("data-src") or "") if img else ""
+                # lazy-loaded cards: data-src holds the real image, src a placeholder
+                image = ""
+                if img:
+                    image = (img.get("data-src") or img.get("src")
+                             or img.get("data-old-hires") or "")
                 url = href if href.startswith("http") else f"https://www.flipkart.com{href}"
                 out.append(self.make_product(self.platform, title, price, url, mrp=mrp,
                                              discount_pct=disc, rating=rating, reviews=reviews,
