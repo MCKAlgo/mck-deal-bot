@@ -4,9 +4,9 @@
   "digest_hour": 9,
   "digest_minute": 0,
   "weekly_report": true,
-  "cycle_time_budget_seconds": 300,
+  "cycle_time_budget_seconds": 230,
   "max_alerts_per_cycle": 10,
-  "max_selective_alerts": 3,
+  "max_selective_alerts": 4,
   "alert_cooldown_hours": 24,
   "realert_improve_pct": 2,
   "product_rechecks_per_cycle": 4,
@@ -17,9 +17,9 @@
     "exceptional_min": 90,
     "best_min": 80,
     "strong_min": 70,
-    "selective_min": 60,
-    "best_confidence_min": 75,
-    "watch_confidence_min": 60
+    "selective_min": 50,
+    "best_confidence_min": 65,
+    "watch_confidence_min": 20
   },
   "cycle_budget": {
     "amazon": 15,
@@ -50,5 +50,11 @@
     "tatacliq": true,
     "myntra": true,
     "firstcry": true
-  }
+  },
+  "best_of_cycle": {
+    "enabled": true,
+    "count": 2,
+    "cooldown_hours": 168
+  },
+  "catchup_seconds": 470
 }

@@ -277,6 +277,15 @@ class DealBot:
                 continue
             fp = self.fingerprint(p)
             p["fingerprint"] = fp
+            # MRP sanity clamp: scrapers sometimes grab a wrong strike-price
+            # node (a Rs.225 peeler showing MRP Rs.1,12,500). A broken MRP
+            # poisons discount math and flags good products as fake. When the
+            # strike price is >= 8x the selling price we drop the MRP and keep
+            # the site-shown discount text instead.
+            if p.get("mrp") and float(p["mrp"]) >= float(p["current_price"]) * 8:
+                p["mrp"] = 0.0
+            if p.get("discount_pct") and float(p["discount_pct"]) > 90:
+                p["discount_pct"] = 0.0
             key = (p["platform"], fp)
             if key in seen_pairs:
                 continue
@@ -346,11 +355,68 @@ class DealBot:
         selective.sort(key=lambda c: (-c["verdict"]["score"], -c["verdict"].get("confidence", 0)))
         # premium labels (EXCEPTIONAL/BEST) first; WATCH-tier extras only fill leftover space
         to_send = strong[:max_strong] + selective[:max_selective]
+
+        # ---- BEST-OF-CYCLE guarantee (v4) -------------------------------
+        # The strict gate needs history + cross-store data that a young
+        # database does not have yet. That meant ZERO posts ever - not
+        # acceptable. If the strict gate produced nothing this cycle, we send
+        # the 2 strongest products we actually scraped right now: biggest
+        # verified listing discount, sane MRP, decent rating. Each product
+        # re-alerts only after its own long cooldown, so no spam.
+        best_cycle_used = False
+        if not to_send:
+            boc_cfg = self.config.get("best_of_cycle", {})
+            if boc_cfg.get("enabled", True):
+                boc_count = int(boc_cfg.get("count", 2))
+                boc_cooldown = int(boc_cfg.get("cooldown_hours", 168))
+                boc_pool = []
+                for pid, p in stored:
+                    price = float(p["current_price"] or 0)
+                    if price < float(self.config.get("min_price", 149)):
+                        continue
+                    disc = float(p.get("discount_pct") or 0)
+                    mrp = float(p.get("mrp") or 0)
+                    eff_disc = disc
+                    if mrp > price * 1.2:
+                        eff_disc = max(eff_disc, round((mrp - price) / mrp * 100, 1))
+                    if eff_disc < 35:
+                        continue
+                    rating = p.get("rating")
+                    if rating is not None and float(rating) < 3.2:
+                        continue
+                    if not self.db.alert_allowed(pid, "best_cycle", boc_cooldown):
+                        continue
+                    rank = eff_disc + (float(rating) * 3 if rating else 8.0) \
+                         + min(10.0, (p.get("reviews_count") or 0) / 1000.0)
+                    boc_pool.append((rank, pid, p, eff_disc))
+                boc_pool.sort(key=lambda x: -x[0])
+                for rank, pid, p, eff_disc in boc_pool[:boc_count]:
+                    stats = self.db.price_stats(pid)
+                    verdict = score_product(p, stats, group_of.get(p.get("fingerprint")),
+                                            rules, gate)
+                    verdict["deal_type"] = "GOOD" if eff_disc >= 50 else "WATCH"
+                    verdict["verdict"] = "BUY" if eff_disc >= 50 else "WATCH"
+                    if not any("top pick" in r.lower() for r in verdict["reasons"]):
+                        verdict["reasons"].insert(
+                            0, f"⭐ Top pick this cycle — {int(eff_disc)}% below listed MRP, "
+                               f"engine verified price just now")
+                    candidates.append({"pid": pid, "product": p, "verdict": verdict,
+                                       "stats": stats,
+                                       "group_info": group_of.get(p.get("fingerprint")),
+                                       "primary": "best_cycle", "tier": "selective"})
+                    to_send = candidates[:]
+                    best_cycle_used = len(to_send) > 0
+
         if not to_send or self.muted() or not self.tg:
             if not self.tg and to_send:
                 log.info("%d deals passed the gate but Telegram not configured yet", len(to_send))
             if self.muted() and to_send:
                 log.info("%d deals found but alerts are muted", len(to_send))
+            top3 = sorted(((c["verdict"]["score"], c["product"]["title"])
+                           for c in candidates), reverse=True)[:3]
+            if top3:
+                log.info("No sends. Closest to gate this cycle: %s",
+                         [(s, t[:34]) for s, t in top3])
             return
 
         chats = self.db.get_chats()
@@ -375,10 +441,19 @@ class DealBot:
                                   c["product"]["current_price"])
                 self.db.bump_stat("alerts_sent")
                 sent += 1
+                log.info("SENT [%s] score=%.1f %s -> %d chats",
+                         c["primary"], c["verdict"]["score"],
+                         c["product"]["title"][:48], len(chats))
+            else:
+                log.warning("SEND FAILED [%s] %s", c["primary"],
+                            c["product"]["title"][:48])
             time.sleep(1.1)
-        log.info("Alerts sent: %d/%d gated candidates (%d with photo) "
-                 "[strong %d, selective %d]",
-                 sent, len(candidates), photos, len(strong), len(selective))
+        log.info("FUNNEL fetched=%d stored=%d triggered=%d gated=%d "
+                 "best_cycle=%s SENT=%d (photos=%d)",
+                 len(all_products), len(stored),
+                 sum(1 for c in candidates if c["primary"] != "best_cycle"),
+                 len(candidates) - (len(to_send) if best_cycle_used else 0),
+                 "yes" if best_cycle_used else "no", sent, photos)
 
     # ------------------------------------------------ adaptive rechecks
     TIER_DELAYS = {  # seconds between rechecks per product tier
@@ -680,10 +755,29 @@ def main():
         return
 
     if args.once:
-        bot.run_cycle(platform_override=args.platform)
-        bot.maybe_digest()
-        bot.maybe_weekly_report()
-        log.info("Single cycle done.")
+        # CATCH-UP MODE (GitHub Actions): GitHub's cron scheduler is
+        # best-effort and often fires late or skips slots entirely. Instead of
+        # one 4-minute cycle per trigger, we keep running full sweep cycles
+        # back-to-back until the catch-up budget is exhausted. One Actions run
+        # now covers up to ~8 minutes of continuous checking, so even a badly
+        # delayed cron still gives the user continuous deal coverage.
+        catchup = int(bot.config.get("catchup_seconds", 470))
+        started = time.time()
+        cycles = 0
+        while True:
+            cycles += 1
+            bot.run_cycle(platform_override=args.platform)
+            bot.maybe_digest()
+            bot.maybe_weekly_report()
+            try:
+                rb = int(bot.config.get("product_rechecks_per_cycle", 4))
+            except (TypeError, ValueError):
+                rb = 4
+            bot.recheck_due_products(budget=rb)
+            if time.time() - started >= catchup:
+                break
+        log.info("Catch-up session done: %d full cycle(s) in %ds",
+                 cycles, int(time.time() - started))
         return
 
     bot.run_forever(platform_override=args.platform)

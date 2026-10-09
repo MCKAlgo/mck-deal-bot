@@ -27,9 +27,9 @@ GATE_DEFAULTS = {
     "exceptional_min": 90,   # + confidence >= best_confidence_min -> EXCEPTIONAL
     "best_min": 80,          # + confidence >= best_confidence_min -> BEST DEAL label
     "strong_min": 70,        # >= this: always send
-    "selective_min": 60,     # 60-69: send selectively (see bot gate)
-    "best_confidence_min": 75,
-    "watch_confidence_min": 60,
+    "selective_min": 50,     # 50-69: send selectively (see bot gate)
+    "best_confidence_min": 65,
+    "watch_confidence_min": 20,
 }
 
 DEAL_ICON = {
@@ -274,12 +274,30 @@ def score_product(product: dict, stats: dict, group_info: dict, rules: dict,
     if rating and reviews and rating >= 4.0 and reviews >= 100:
         reasons.append(f"✅ Trusted: {rating}★ from {int(reviews):,} buyers")
 
-    # ---------- MRP%-off is SECONDARY evidence only ----------
+    # ---------- MRP%-off evidence: discount factor + rule trigger ----------
+    # v4: a verified listing discount (site-shown % off) is REAL deal signal
+    # even before history builds. It contributes up to +12 score so a genuine
+    # 60%+ off product can actually reach the send gate on day one.
     disc = _r0(product.get("discount_pct"))
-    if disc >= 50 and not fake_mrp:
-        reasons.append(f"🏷️ {int(disc)}% off MRP (verified reference)")
+    if disc >= 30 and not fake_mrp:
+        if disc >= 60:
+            comp["listing_discount"] = 12
+        elif disc >= 50:
+            comp["listing_discount"] = 9
+        elif disc >= 40:
+            comp["listing_discount"] = 6
+        else:
+            comp["listing_discount"] = 3
+        if disc >= 50:
+            reasons.append(f"🏷️ {int(disc)}% off listed MRP")
+    else:
+        comp["listing_discount"] = 0
     if disc >= 60 and not fake_mrp and rules.get("discount_60", True):
         triggered.append("discount_60")
+        comp["listing_discount"] = min(16, comp.get("listing_discount", 0) + 4)
+    elif disc >= 50 and not fake_mrp and rules.get("discount_50", True):
+        triggered.append("discount_50")
+        comp["listing_discount"] = min(16, comp.get("listing_discount", 0) + 2)
 
     if price < 99:
         genuine = False
