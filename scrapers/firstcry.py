@@ -92,16 +92,19 @@ class FirstCryAdapter(RetailerAdapter):
         return out
 
     def _fetch_full(self, url: str) -> str:
-        """FirstCry's edge serves a ~220KB JS skeleton on the FIRST request of
-        a session and the full 3.5MB server-rendered page on the SECOND
-        (verified by A/B capture 2026-10). Same-session retry gets the goods."""
-        html = self.fetch(url)
-        if html and len(html) > 500000:
-            return html
-        html2 = self.fetch(url)
-        if html2 and len(html2) > len(html or ""):
-            return html2
-        return html or ""
+        """FirstCry's edge intermittently serves a ~220KB JS skeleton instead
+        of the full 3.5MB server-rendered page (A/B verified 2026-10). Retry
+        up to 3x, alternating same-session and fresh-session attempts."""
+        best = ""
+        for attempt in range(3):
+            if attempt == 1:
+                self.fresh_session()
+            html = self.fetch(url)
+            if html and len(html) > len(best):
+                best = html
+            if html and len(html) > 500000:
+                return html
+        return best
 
     def fetch_products(self, offset: int = 0, budget: int = 6, cats: list = None) -> list:
         products = []
