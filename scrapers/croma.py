@@ -133,20 +133,31 @@ class CromaAdapter(RetailerAdapter):
         seen = {p["title"].lower()[:70] for p in out}
         for tile in soup.select("li.product-item, div.product-tile")[:60]:
             try:
-                a = tile.select_one("a.link, a.pdp-link, a[href*='/p/']")
+                a = tile.select_one("a[href*='/p/']")
                 if not a:
                     continue
-                title = (a.get("title") or a.get_text(" ", strip=True) or "").strip()
+                h3 = tile.select_one("h3.product-title")
+                title = (h3.get_text(" ", strip=True) if h3 else
+                         (a.get("title") or a.get_text(" ", strip=True) or "")).strip()
                 if len(title) < 10 or title.lower()[:70] in seen:
                     continue
-                price_el = tile.select_one(".price .value, .pdp-price, span.price")
+                if "zipcare" in title.lower():
+                    continue  # service add-on tiles, not real products
+                # price: span[data-testid=new-price] (2026 markup) / legacy spans
+                price_el = (tile.select_one("span[data-testid='new-price']")
+                            or tile.select_one(".price .value, .pdp-price, span.price"))
                 if not price_el:
                     continue
                 price = parse_price(price_el.get_text())
                 if price < 100:
                     continue
-                strike = tile.select_one(".price .strike-through, s, del")
+                strike = (tile.select_one("span[data-testid='old-price']")
+                          or tile.select_one(".price .strike-through, s, del"))
                 mrp = parse_price(strike.get_text()) if strike else 0.0
+                if mrp <= price:
+                    # discount band text e.g. "32% OFF"
+                    m = re.search(r"(\d{1,2})\s*%\s*off", tile.get_text(" ", strip=True), re.I)
+                    mrp = round(price / (1 - int(m.group(1)) / 100)) if m else 0.0
                 if mrp <= price:
                     mrp = 0.0
                 disc = round((mrp - price) / mrp * 100, 1) if mrp > price else 0.0

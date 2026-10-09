@@ -131,6 +131,85 @@ class FirstCryAdapter(RetailerAdapter):
                 image_url=f.get("image", ""), category=category))
         if out:
             log.info("[%s] scraped %d products", self.platform, len(out))
+        # Server-rendered listing tiles (verified from live capture 2026-10):
+        # div.list_block > div.li_inner_block[aria-label=title], img on
+        # cdn.fcglcdn.com, prices in div.rupee aria-label "Sale price RS x
+        # and Regular price RS y", rating in span[data-rate].
+        if len(out) < 40:
+            out.extend(self._parse_tiles(html, category, out))
+        return out
+
+    def _parse_tiles(self, html: str, category: str, seed: list) -> list:
+        """Parse FirstCry's server-rendered product tiles (works on clean IPs)."""
+        from bs4 import BeautifulSoup
+        from scraper_base import parse_price
+
+        soup = BeautifulSoup(html, "lxml")
+        out = list(seed)
+        seen = {(p.get("url") or p["title"].lower()[:60]) for p in out}
+        for block in soup.select("div.list_block")[:80]:
+            try:
+                # NOTE: data-outstock="true" is the server-side default for ALL
+                # cards (JS flips it later) - it is NOT a real stock signal.
+                inner = block.select_one("div.li_inner_block") or block
+                title = (inner.get("aria-label") or "").strip()
+                a = block.select_one("a[href*='product-detail']")
+                href = (a.get("href") or "") if a else ""
+                if len(title) < 8 or not href:
+                    continue
+                key = title.lower()[:60]
+                url = href if href.startswith("https") else (
+                    "https:" + href if href.startswith("//") else
+                    "https://www.firstcry.com" + href)
+                if key in seen or url in seen:
+                    continue
+                rupee = block.select_one("div.rupee")
+                label = (rupee.get("aria-label") or "") if rupee else ""
+                m = re.search(r"Sale price RS\s*([\d.,]+)", label, re.I)
+                price = parse_price(m.group(1)) if m else 0.0
+                m2 = re.search(r"Regular price RS\s*([\d.,]+)", label, re.I)
+                mrp = parse_price(m2.group(1)) if m2 else 0.0
+                if price < 50:
+                    continue
+                if mrp <= price:
+                    mrp = 0.0
+                rating = None
+                rate_el = block.select_one("span[data-rate]")
+                if rate_el:
+                    try:
+                        rating = float(rate_el.get("data-rate"))
+                    except (TypeError, ValueError):
+                        rating = None
+                reviews = None
+                frev = block.select_one(".frev")
+                if frev:
+                    m3 = re.search(r"([\d.]+[kK]?)\s*Ratings", frev.get_text())
+                    if m3:
+                        txt = m3.group(1).lower().replace(",", "")
+                        try:
+                            reviews = (int(float(txt[:-1]) * 1000)
+                                       if txt.endswith("k") else int(float(txt)))
+                        except ValueError:
+                            reviews = None
+                image = ""
+                img = block.select_one("img")
+                if img:
+                    src = (img.get("src") or "").strip()
+                    pid_m = re.search(r"/(\d{4,8})[a-z]\.(?:webp|jpg)", src)
+                    if pid_m:
+                        image = ("https://cdn.fcglcdn.com/brainbees/images/"
+                                 f"products/448x532/{pid_m.group(1)}a.jpg")
+                    elif src.startswith("//"):
+                        image = "https:" + src
+                disc = round((mrp - price) / mrp * 100, 1) if mrp > price else 0.0
+                out.append(self.make_product(
+                    self.platform, title, price, url, mrp=mrp, discount_pct=disc,
+                    rating=rating, reviews=reviews, image_url=image,
+                    category=category))
+                seen.add(key)
+                seen.add(url)
+            except Exception as e:
+                log.debug("firstcry tile skip: %s", str(e)[:70])
         return out
 
     def _ld_product(self, item: dict, found: list):
