@@ -39,6 +39,15 @@ def run(name, cls, budget):
     t0 = time.time()
     try:
         ad = cls()
+        orig = ad.fetch
+
+        def wrapped(url, **kw):
+            html = orig(url, **kw)
+            print(f"    [fetch] {name} {url[:58]} -> "
+                  f"{('%d chars' % len(html)) if html else 'EMPTY'}")
+            return html
+
+        ad.fetch = wrapped
         products = ad.fetch_products(offset=0, budget=budget) or []
         imgs = sum(1 for p in products if p.get("image_url"))
         sample = ""

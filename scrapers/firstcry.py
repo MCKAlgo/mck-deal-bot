@@ -11,6 +11,7 @@ import logging
 import re
 
 from adapter import RetailerAdapter
+from scraper_base import DESKTOP_UAS, parse_price
 from scrapers.state_walk import (dedupe, extract_all_ldjson, extract_state,
                                  walk_products)
 
@@ -49,6 +50,28 @@ SPEC = {
 class FirstCryAdapter(RetailerAdapter):
     platform = "firstcry"
     blocked_count = 0
+
+    def __init__(self):
+        super().__init__()
+        # FirstCry's WAF serves JS shells to requests carrying the full
+        # Sec-Fetch/Cache-Control header set or a mobile UA (verified by
+        # capture comparison 2026-10). Minimal browser headers + desktop
+        # Chrome UA get the full 3.5MB server-rendered page.
+        self.fresh_session()
+
+    def fresh_session(self):
+        s = super().fresh_session()
+        for h in ("Sec-Fetch-Dest", "Sec-Fetch-Mode", "Sec-Fetch-Site",
+                  "Sec-Fetch-User", "Cache-Control",
+                  "Upgrade-Insecure-Requests"):
+            s.headers.pop(h, None)
+        s.headers.update({
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-IN,en;q=0.9",
+            "Connection": "close",
+            "User-Agent": DESKTOP_UAS[0],
+        })
+        return s
 
     def _flat_urls(self):
         return [(u.rstrip("/").rsplit("/", 1)[-1][:24], u) for u in CATEGORY_URLS] + \
