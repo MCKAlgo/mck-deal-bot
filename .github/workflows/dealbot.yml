@@ -32,7 +32,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
 
@@ -57,11 +57,14 @@ jobs:
           git add data/deals.db data/deals.db-wal 2>/dev/null || git add data/deals.db
           git diff --cached --quiet || (git commit -m "price history update [skip ci]" && git push)
 
+      # NOTE: GITHUB_TOKEN CANNOT trigger new workflow runs (GitHub ignores
+      # events it creates itself - anti-recursion). Only a PAT works here.
+      # CHAIN_TOKEN = repo secret holding a fine-grained PAT with Actions:write.
       - name: Chain next run (self-perpetuating 24/7)
-        if: success() || failure()
+        if: always()
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CHAIN_TOKEN }}
         run: |
           QUEUED=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/dealbot.yml/runs?status=queued&per_page=1" \
