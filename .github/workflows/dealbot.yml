@@ -1,35 +1,38 @@
 name: DealBot 24/7
 
-# FREE 24/7 HOSTING: GitHub Actions runs one check cycle every 5 minutes.
-# The rotation cursor + price history live in data/deals.db which is
-# committed back after every run, so sweeps continue seamlessly.
+# FREE 24/7 HOSTING - CONTINUOUS RUNNER DESIGN
 #
-# Setup (3 minutes):
-#   1. Create a GitHub repo and upload this whole folder (including .github)
-#   2. Settings > Secrets and variables > Actions > New repository secret:
-#        Name:  TELEGRAM_BOT_TOKEN
-#        Value: your bot token
-#   3. Done. Alerts flow to your registered Telegram chats forever, free.
+# GitHub's cron scheduler is best-effort and often skips slots (observed:
+# 1 run in 12 hours). So instead of depending on cron, each Actions run
+# checks deals CONTINUOUSLY for ~50 minutes and then CHAINS the next run:
+#   - run starts  -> sweeps every platform, cycles back-to-back
+#   - run ends    -> dispatches the next run (unless one is already queued)
+#   - hourly cron -> only a seed/backup in case a chain ever breaks
+# A runner is therefore almost always active, and the Telegram long-poller
+# inside the run answers user commands (/deals /status ...) around the clock.
 #
-# The token is read from the TELEGRAM_BOT_TOKEN secret, so it never lives
-# in the code - safe for public repos (public = unlimited free Actions minutes).
+# Price history is committed back to data/deals.db after EVERY cycle, so
+# nothing is lost even if a run times out.
+#
+# Public repo = unlimited free Actions minutes.
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 * * * *"   # hourly seed only - the chain sustains itself
   workflow_dispatch: {}
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: dealbot
-  cancel-in-progress: true
+  cancel-in-progress: false   # serial: one run at a time, chain queues neatly
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run one check cycle
+      - name: Run continuous deal cycles (~50 min)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python bot.py --once
@@ -53,3 +56,24 @@ jobs:
           git config user.email "dealbot@users.noreply.github.com"
           git add data/deals.db data/deals.db-wal 2>/dev/null || git add data/deals.db
           git diff --cached --quiet || (git commit -m "price history update [skip ci]" && git push)
+
+      - name: Chain next run (self-perpetuating 24/7)
+        if: success() || failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          QUEUED=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/dealbot.yml/runs?status=queued&per_page=1" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin).get('total_count',0))")
+          echo "queued runs: $QUEUED"
+          if [ "${QUEUED:-0}" -eq 0 ]; then
+            curl -s -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/dealbot.yml/dispatches" \
+              -d '{"ref":"main"}'
+            echo "next run chained"
+          else
+            echo "run already queued - chain continues without dispatch"
+          fi

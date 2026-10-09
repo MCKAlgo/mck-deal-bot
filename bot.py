@@ -15,6 +15,7 @@ import json
 import logging
 import logging.handlers
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -356,21 +357,26 @@ class DealBot:
         # premium labels (EXCEPTIONAL/BEST) first; WATCH-tier extras only fill leftover space
         to_send = strong[:max_strong] + selective[:max_selective]
 
-        # ---- BEST-OF-CYCLE guarantee (v4) -------------------------------
-        # The strict gate needs history + cross-store data that a young
-        # database does not have yet. That meant ZERO posts ever - not
-        # acceptable. If the strict gate produced nothing this cycle, we send
-        # the 2 strongest products we actually scraped right now: biggest
-        # verified listing discount, sane MRP, decent rating. Each product
-        # re-alerts only after its own long cooldown, so no spam.
+        # ---- BEST-OF-CYCLE top-up (v4.2) -------------------------------
+        # Two jobs:
+        #   1. If the strict gate produced NOTHING (young DB, no history),
+        #      send the strongest scraped deals so posts NEVER stop.
+        #   2. If the gate sent fewer than min_flow deals (cooldowns absorbing
+        #      repeats), top up so every cycle delivers at least min_flow
+        #      fresh picks. Each pick re-alerts only after its own 7-day
+        #      cooldown, so this never spams the same product.
         best_cycle_used = False
-        if not to_send:
+        min_flow = int(self.config.get("best_of_cycle", {}).get("min_sends_per_cycle", 2))
+        if len(to_send) < min_flow:
             boc_cfg = self.config.get("best_of_cycle", {})
             if boc_cfg.get("enabled", True):
                 boc_count = int(boc_cfg.get("count", 2))
                 boc_cooldown = int(boc_cfg.get("cooldown_hours", 168))
+                already = {c["pid"] for c in to_send}
                 boc_pool = []
                 for pid, p in stored:
+                    if pid in already:
+                        continue
                     price = float(p["current_price"] or 0)
                     if price < float(self.config.get("min_price", 149)):
                         continue
@@ -390,7 +396,8 @@ class DealBot:
                          + min(10.0, (p.get("reviews_count") or 0) / 1000.0)
                     boc_pool.append((rank, pid, p, eff_disc))
                 boc_pool.sort(key=lambda x: -x[0])
-                for rank, pid, p, eff_disc in boc_pool[:boc_count]:
+                need = min_flow - len(to_send)
+                for rank, pid, p, eff_disc in boc_pool[:max(need, 0) or boc_count]:
                     stats = self.db.price_stats(pid)
                     verdict = score_product(p, stats, group_of.get(p.get("fingerprint")),
                                             rules, gate)
@@ -404,7 +411,7 @@ class DealBot:
                                        "stats": stats,
                                        "group_info": group_of.get(p.get("fingerprint")),
                                        "primary": "best_cycle", "tier": "selective"})
-                    to_send = candidates[:]
+                    to_send.append(candidates[-1])
                     best_cycle_used = len(to_send) > 0
 
         if not to_send or self.muted() or not self.tg:
@@ -767,13 +774,13 @@ def main():
         return
 
     if args.once:
-        # CATCH-UP MODE (GitHub Actions): GitHub's cron scheduler is
-        # best-effort and often fires late or skips slots entirely. Instead of
-        # one 4-minute cycle per trigger, we keep running full sweep cycles
-        # back-to-back until the catch-up budget is exhausted. One Actions run
-        # now covers up to ~8 minutes of continuous checking, so even a badly
-        # delayed cron still gives the user continuous deal coverage.
-        catchup = int(bot.config.get("catchup_seconds", 470))
+        # CONTINUOUS MODE (GitHub Actions): each run cycles back-to-back for
+        # ~50 minutes, and the workflow CHAINS the next run at the end. So a
+        # runner is almost always active - independent of GitHub's flaky cron
+        # scheduler. Telegram long-polling runs in a daemon thread during the
+        # whole session, so user commands (/deals /status ...) get answered
+        # around the clock, and deal pushes never depend on cron firing.
+        catchup = int(bot.config.get("catchup_seconds", 3000))
         started = time.time()
         cycles = 0
         while True:
@@ -786,9 +793,29 @@ def main():
             except (TypeError, ValueError):
                 rb = 4
             bot.recheck_due_products(budget=rb)
+            # commit price history back to the repo after EVERY cycle so a
+            # timeout/cancel can never lose the whole session's history
+            if os.environ.get("GITHUB_ACTIONS"):
+                try:
+                    subprocess.run(
+                        ["git", "config", "user.name", "dealbot"], cwd=os.getcwd(),
+                        capture_output=True, timeout=10)
+                    subprocess.run(
+                        ["git", "config", "user.email",
+                         "dealbot@users.noreply.github.com"], cwd=os.getcwd(),
+                        capture_output=True, timeout=10)
+                    subprocess.run(["git", "add", "data/deals.db"], cwd=os.getcwd(),
+                                   capture_output=True, timeout=10)
+                    subprocess.run(
+                        ["git", "commit", "-m", "price history update [skip ci]"],
+                        cwd=os.getcwd(), capture_output=True, timeout=30)
+                    subprocess.run(["git", "push", "origin", "main"], cwd=os.getcwd(),
+                                   capture_output=True, timeout=60)
+                except Exception as e:
+                    log.debug("history commit skipped: %s", str(e)[:80])
             if time.time() - started >= catchup:
                 break
-        log.info("Catch-up session done: %d full cycle(s) in %ds",
+        log.info("Continuous session done: %d full cycle(s) in %ds",
                  cycles, int(time.time() - started))
         return
 

@@ -54,7 +54,8 @@
   "best_of_cycle": {
     "enabled": true,
     "count": 2,
-    "cooldown_hours": 168
+    "cooldown_hours": 168,
+    "min_sends_per_cycle": 2
   },
-  "catchup_seconds": 470
+  "catchup_seconds": 3000
 }
