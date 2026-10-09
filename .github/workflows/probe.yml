@@ -25,3 +25,12 @@ jobs:
         run: |
           pip install -r requirements.txt -q
           python tools/smoke_adapters.py
+
+      - name: Capture store pages (ground truth)
+        run: python tools/capture_pages.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: store-pages
+          path: /tmp/storepages/
+          retention-days: 3

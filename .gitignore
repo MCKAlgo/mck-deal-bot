@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+logs/
+data/deals.db-wal
+data/deals.db-shm
