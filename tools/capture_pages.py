@@ -19,10 +19,10 @@ HDRS = {
 }
 
 PAGES = [
-    ("croma", "https://www.croma.com/televisions/c/1001"),
+    ("croma-searchB", "https://www.croma.com/searchB?q=televisions"),
+    ("croma-tele", "https://www.croma.com/televisions/c/1001"),
     ("jiomart", "https://www.jiomart.com/catalogsearch/result/?q=deals"),
     ("firstcry", "https://www.firstcry.com/kids-footwear"),
-    ("myntra", "https://www.myntra.com/men-tshirts"),
     ("tatacliq", "https://www.tatacliq.com/mens-t-shirts/c-msh1207002"),
 ]
 
