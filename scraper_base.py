@@ -8,13 +8,18 @@ import requests
 
 log = logging.getLogger("scraper.base")
 
-USER_AGENTS = [
+DESKTOP_UAS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
+MOBILE_UAS = [
     "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
 ]
+
+USER_AGENTS = DESKTOP_UAS + MOBILE_UAS
 
 BASE_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -93,6 +98,20 @@ class BaseScraper:
         """Reset per-cycle circuit breaker state."""
         self._circuit_open = False
         self._circuit_403 = 0
+        # WAFs (Akamai/Cloudflare) drop tracking cookies on a blocked response;
+        # those poisoned cookies keep every later request blocked even after
+        # the IP reputation recovers. Start every cycle cookie-clean.
+        self.session.cookies.clear()
+
+    def fresh_session(self):
+        """Brand-new session = new TLS connection + clean cookie jar.
+        Used after a hard block: many retail WAFs flag the TCP/TLS session
+        itself, so merely clearing cookies or rotating the UA is not enough."""
+        self.session = requests.Session()
+        self.session.headers.update(dict(BASE_HEADERS))
+        self.rotate_ua()
+        self.last_request_ts = 0.0
+        return self.session
 
     def circuit_open(self) -> bool:
         """True once the site has hard-blocked us twice in a row this cycle -
@@ -100,7 +119,9 @@ class BaseScraper:
         return self._circuit_open
 
     def rotate_ua(self):
-        self.session.headers["User-Agent"] = random.choice(USER_AGENTS)
+        # Desktop UAs score better at retail WAFs - weight 80% desktop.
+        pool = DESKTOP_UAS if random.random() < 0.8 else MOBILE_UAS
+        self.session.headers["User-Agent"] = random.choice(pool)
 
     def polite_delay(self, lo=1.2, hi=2.8):
         gap = time.time() - self.last_request_ts
@@ -125,18 +146,18 @@ class BaseScraper:
                 if r.status_code == 200 and len(r.text) > 2000:
                     if validate is None or validate(r.text):
                         return r.text
-                    log.warning("[%s] shell/empty page detected (%d bytes), rotating UA",
+                    log.warning("[%s] shell/empty page detected (%d bytes), fresh session",
                                 self.platform, len(r.text))
-                    self.rotate_ua()
-                    self.session.cookies.clear()
+                    self.fresh_session()
                     continue
                 if r.status_code in (429, 403, 503):
                     self._circuit_403 += 1
                     if self._circuit_403 >= 2:
                         self._circuit_open = True
-                    log.warning("[%s] %s -> %s, backing off", self.platform, url[:80], r.status_code)
+                    log.warning("[%s] %s -> %s, fresh session + backoff",
+                                self.platform, url[:80], r.status_code)
                     time.sleep(4 + attempt * 6)
-                    self.rotate_ua()
+                    self.fresh_session()
                     continue
                 log.warning("[%s] %s -> %s (%d bytes)", self.platform, url[:80], r.status_code, len(r.text))
                 return ""

@@ -20,3 +20,8 @@ jobs:
 
       - name: Probe all stores
         run: python tools/probe_stores.py
+
+      - name: Smoke-test real adapters
+        run: |
+          pip install -r requirements.txt -q
+          python tools/smoke_adapters.py
