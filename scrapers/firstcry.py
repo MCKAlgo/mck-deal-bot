@@ -91,6 +91,18 @@ class FirstCryAdapter(RetailerAdapter):
                 break
         return out
 
+    def _fetch_full(self, url: str) -> str:
+        """FirstCry's edge serves a ~220KB JS skeleton on the FIRST request of
+        a session and the full 3.5MB server-rendered page on the SECOND
+        (verified by A/B capture 2026-10). Same-session retry gets the goods."""
+        html = self.fetch(url)
+        if html and len(html) > 500000:
+            return html
+        html2 = self.fetch(url)
+        if html2 and len(html2) > len(html or ""):
+            return html2
+        return html or ""
+
     def fetch_products(self, offset: int = 0, budget: int = 6, cats: list = None) -> list:
         products = []
         self.begin_sweep()
@@ -101,7 +113,7 @@ class FirstCryAdapter(RetailerAdapter):
         for category, url in picked:
             if self.circuit_open():
                 break
-            html = self.fetch(url)
+            html = self._fetch_full(url)
             if not html or len(html) < 60000:
                 self.blocked_count += 1
                 if self.blocked_count % 15 == 1:
