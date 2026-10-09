@@ -12,12 +12,12 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scrapers.amazon import AmazonAdapter          # noqa: E402
+from scrapers.amazon import AmazonScraper           # noqa: E402
 from scrapers.ajio import AjioAdapter              # noqa: E402
 from scrapers.croma import CromaAdapter            # noqa: E402
 from scrapers.firstcry import FirstCryAdapter      # noqa: E402
 from scrapers.jiomart import JioMartAdapter        # noqa: E402
-from scrapers.meesho import MeeshoAdapter          # noqa: E402
+from scrapers.meesho import MeeshoScraper          # noqa: E402
 from scrapers.myntra import MyntraAdapter          # noqa: E402
 from scrapers.nykaa import NykaaAdapter            # noqa: E402
 from scrapers.tatacliq import TataCliqAdapter      # noqa: E402
@@ -28,8 +28,8 @@ CASES = [
     ("firstcry", FirstCryAdapter, 2),
     ("myntra", MyntraAdapter, 1),
     ("tatacliq", TataCliqAdapter, 1),
-    ("amazon", AmazonAdapter, 1),
-    ("meesho", MeeshoAdapter, 1),
+    ("amazon", AmazonScraper, 1),
+    ("meesho", MeeshoScraper, 1),
     ("nykaa", NykaaAdapter, 1),
     ("ajio", AjioAdapter, 1),
 ]
