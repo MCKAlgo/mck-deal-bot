@@ -19,11 +19,12 @@ HDRS = {
 }
 
 PAGES = [
-    ("croma-searchB", "https://www.croma.com/searchB?q=televisions"),
-    ("croma-tele", "https://www.croma.com/televisions/c/1001"),
-    ("jiomart", "https://www.jiomart.com/catalogsearch/result/?q=deals"),
-    ("firstcry", "https://www.firstcry.com/kids-footwear"),
-    ("tatacliq", "https://www.tatacliq.com/mens-t-shirts/c-msh1207002"),
+    ("jiomart", "https://www.jiomart.com/catalogsearch/result/?q=deals", {}),
+    ("firstcry-br", "https://www.firstcry.com/kids-footwear",
+     {"Accept-Encoding": "gzip, deflate, br"}),
+    ("firstcry-plain", "https://www.firstcry.com/kids-footwear",
+     {"Accept-Encoding": "gzip, deflate"}),
+    ("tatacliq", "https://www.tatacliq.com/mens-t-shirts/c-msh1207002", {}),
 ]
 
 
@@ -31,17 +32,17 @@ def main() -> int:
     os.makedirs(OUT, exist_ok=True)
     s = requests.Session()
     s.headers.update(HDRS)
-    for name, url in PAGES:
+    for name, url, over in PAGES:
         try:
-            r = s.get(url, timeout=20)
+            r = s.get(url, timeout=20, headers=over)
             path = os.path.join(OUT, f"{name}.html")
             with open(path, "w", encoding="utf-8", errors="replace") as f:
                 f.write(r.text or "")
             with open(os.path.join(OUT, f"{name}.meta"), "w") as f:
                 f.write(f"status={r.status_code} bytes={len(r.content)} final={r.url}\n")
-            print(f"[capture] {name:10} {r.status_code} {len(r.content):>8} bytes")
+            print(f"[capture] {name:16} {r.status_code} {len(r.content):>8} bytes")
         except Exception as exc:  # noqa: BLE001
-            print(f"[capture] {name:10} ERR {type(exc).__name__}: {str(exc)[:80]}")
+            print(f"[capture] {name:16} ERR {type(exc).__name__}: {str(exc)[:80]}")
         time.sleep(2)
     return 0
 
