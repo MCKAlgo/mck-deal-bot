@@ -1,0 +1,22 @@
+name: Store probe
+
+# Diagnostic only - tests each retailer's page/API endpoints from the SAME
+# datacenter IP that the dealbot runs from. Manual trigger, ~1 minute.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Probe all stores
+        run: python tools/probe_stores.py
