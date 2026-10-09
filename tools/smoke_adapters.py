@@ -45,6 +45,11 @@ def run(name, cls, budget):
             html = orig(url, **kw)
             print(f"    [fetch] {name} {url[:58]} -> "
                   f"{('%d chars' % len(html)) if html else 'EMPTY'}")
+            if name == "firstcry" and html:
+                os.makedirs("/tmp/storepages", exist_ok=True)
+                with open("/tmp/storepages/firstcry_adapter.html", "w",
+                          encoding="utf-8", errors="replace") as f:
+                    f.write(html)
             return html
 
         ad.fetch = wrapped
