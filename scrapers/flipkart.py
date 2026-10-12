@@ -141,8 +141,10 @@ class FlipkartScraper(RetailerAdapter):
         for category, url in picked:
             if self.circuit_open():
                 break
-            # page 2 doubles yield when Flipkart serves real pages
-            page_urls = [url + "&page=2", url] if "?" in url else [url]
+            # pages 1+2+3: deeper discount-desc coverage per category
+            # (page 3 is skipped automatically when the site short-serves)
+            page_urls = ([url + "&page=3", url + "&page=2", url]
+                         if "?" in url else [url])
             for page_url in page_urls:
                 if self.circuit_open():
                     break

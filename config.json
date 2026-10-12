@@ -4,13 +4,13 @@
   "digest_hour": 9,
   "digest_minute": 0,
   "weekly_report": true,
-  "cycle_time_budget_seconds": 230,
+  "cycle_time_budget_seconds": 240,
   "max_alerts_per_cycle": 10,
   "max_selective_alerts": 4,
   "alert_cooldown_hours": 24,
   "realert_improve_pct": 2,
   "product_rechecks_per_cycle": 4,
-  "max_categories": 400,
+  "max_categories": 1200,
   "min_price": 149,
   "max_price": 200000,
   "gate": {
@@ -22,16 +22,16 @@
     "watch_confidence_min": 20
   },
   "cycle_budget": {
-    "amazon": 15,
-    "flipkart": 8,
-    "meesho": 8,
-    "croma": 6,
-    "jiomart": 6,
-    "nykaa": 8,
-    "ajio": 8,
-    "tatacliq": 8,
-    "myntra": 8,
-    "firstcry": 6
+    "amazon": 18,
+    "flipkart": 12,
+    "meesho": 10,
+    "croma": 8,
+    "jiomart": 10,
+    "nykaa": 10,
+    "ajio": 10,
+    "tatacliq": 10,
+    "myntra": 10,
+    "firstcry": 8
   },
   "rules": {
     "all_time_low": true,

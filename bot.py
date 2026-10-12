@@ -209,6 +209,18 @@ class DealBot:
         enabled = [k for k, v in self.config.get("platforms", {}).items() if v]
         if platform_override:
             enabled = [platform_override] if platform_override in self.scrapers else enabled
+        elif len(enabled) > 1:
+            # FAIR SWEEP ROTATION: rotate platform order every cycle so the
+            # sweep time-budget defers a DIFFERENT tail of stores each cycle.
+            # Without this, stores late in the dict order (croma, tatacliq...)
+            # were starved every cycle while the head ate the whole budget.
+            try:
+                rot = int(self.db.get_meta("sweep_rot", "0") or 0)
+            except (TypeError, ValueError):
+                rot = 0
+            k = rot % len(enabled)
+            enabled = enabled[k:] + enabled[:k]
+            self.db.set_meta("sweep_rot", str(rot + 1))
         sweep_t0 = time.time()
         budget_s = int(self.config.get("cycle_time_budget_seconds", 300))
         all_products = []
