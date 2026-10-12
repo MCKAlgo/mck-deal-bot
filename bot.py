@@ -432,7 +432,17 @@ class DealBot:
             return
         sent = 0
         photos = 0
+        skipped_dead = 0
+        from scraper_base import link_alive
         for c in to_send:
+            # DEAD-LINK GATE: never push a URL that provably 404s / shows the
+            # "moved or deleted" page. Fails open on inconclusive networks.
+            link = c["product"].get("url") or ""
+            if link.startswith("http") and not link_alive(link):
+                skipped_dead += 1
+                log.info("SKIP dead link [%s] %s",
+                         c["product"].get("platform"), link[:90])
+                continue
             msg = fmt_deal_alert(c["product"], c["verdict"], c["group_info"], c["stats"])
             buttons = deal_buttons(c["product"], c["group_info"])
             # IMAGE RESOLUTION CHAIN (v4.1): fresh scrape -> stored DB row
@@ -468,11 +478,12 @@ class DealBot:
                             c["product"]["title"][:48])
             time.sleep(1.1)
         log.info("FUNNEL fetched=%d stored=%d triggered=%d gated=%d "
-                 "best_cycle=%s SENT=%d (photos=%d)",
+                 "best_cycle=%s SENT=%d (photos=%d deadlink_skipped=%d)",
                  len(all_products), len(stored),
                  sum(1 for c in candidates if c["primary"] != "best_cycle"),
                  len(candidates) - (len(to_send) if best_cycle_used else 0),
-                 "yes" if best_cycle_used else "no", sent, photos)
+                 "yes" if best_cycle_used else "no", sent, photos,
+                 skipped_dead)
 
     # ------------------------------------------------ adaptive rechecks
     TIER_DELAYS = {  # seconds between rechecks per product tier

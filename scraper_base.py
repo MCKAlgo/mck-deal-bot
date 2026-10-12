@@ -83,6 +83,46 @@ def normalize_image_url(url) -> str:
     return url
 
 
+def link_alive(url: str, timeout: int = 12) -> bool:
+    """Pre-send link gate: False only on PROOF the page is dead.
+
+    Flipkart delisted/invalid products return HTTP 404 with a tiny shell page
+    saying "Unfortunately the page you are looking for has been moved or
+    deleted". We block sends ONLY on that kind of hard proof:
+      - HTTP 404 / 410
+      - body carries the dead-page marker
+    Everything else (timeout, 403 WAF, connection reset, slow CDN) fails OPEN
+    so a flaky network never suppresses valid deals.
+    """
+    if not url or not url.startswith("http"):
+        return True
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass
+    try:
+        headers = dict(BASE_HEADERS)
+        headers["User-Agent"] = random.choice(DESKTOP_UAS)
+        resp = requests.get(url, headers=headers, timeout=timeout,
+                            allow_redirects=True, stream=True, verify=False)
+        if resp.status_code in (404, 410):
+            resp.close()
+            return False
+        # dead shells are ~2 KB; read a small slice to marker-check cheaply
+        body = b""
+        for chunk in resp.iter_content(chunk_size=65536):
+            body += chunk
+            if len(body) >= 262144:
+                break
+        resp.close()
+        if "moved or deleted" in body.decode("utf-8", "ignore").lower():
+            return False
+        return True
+    except Exception:
+        return True  # inconclusive - never suppress a deal on uncertainty
+
+
 class BaseScraper:
     platform = "base"
 

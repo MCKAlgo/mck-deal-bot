@@ -212,8 +212,15 @@ class FlipkartScraper(RetailerAdapter):
         for f in found[:60]:
             price = f["price"]
             mrp = f["mrp"] or 0
+            pid = f.get("pid") or ""
+            # listingIds (LST...) can NEVER resolve - Flipkart serves its
+            # "moved or deleted" 404 shell for them. Only productId-style
+            # pids produce a working page.
+            if not pid or pid.startswith("LST"):
+                continue
             disc = round((mrp - price) / mrp * 100, 1) if mrp > price else 0
-            url = f"https://www.flipkart.com/product?pid={f['pid']}"
+            # pid-resolve URL (verified 200 OK, redirects to canonical page)
+            url = f"https://www.flipkart.com/product/p/{pid}?pid={pid}"
             try:
                 reviews = int(f["reviews"]) if f.get("reviews") else None
             except (TypeError, ValueError):
